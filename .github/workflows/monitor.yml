@@ -1,0 +1,25 @@
+name: Y2Mate Domain Watchdog
+
+on:
+  schedule:
+    # Runs automatically every 15 minutes, 24/7
+    - cron: '*/15 * * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub UI anytime
+
+jobs:
+  check-domains:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run Domain Availability Scanner
+        env:
+          GODADDY_TOKEN: ${{ secrets.GODADDY_TOKEN || 'gd_pat_mkTG9UGo5YyNUITj2bCJLPsswGYYYnzGdfDGBYyPGyb_08c1b0ac' }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL || 'abbasgawali111@gmail.com' }}
+        run: node scanner.js

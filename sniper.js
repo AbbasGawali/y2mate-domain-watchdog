@@ -34,13 +34,17 @@ const REGISTRANT_DETAILS = {
   }
 };
 
-// Elite Tier: The 35 exact TLDs where 99% of Y2Mate drops and mirrors happen
+// Elite Tier: Real top-level extensions where genuine Y2Mate drops and traffic happen
+// (Excludes CentralNic vanity subdomains like uk.com/uk.net that inherit fake DR)
 const ELITE_HOT_TLDS = [
   'shop', 'is', 'skin', 'uno', 'app', 'pro', 'download', 'video', 'tube', 'to',
   'cc', 'fun', 'xyz', 'tv', 'in', 'live', 'stream', 'link', 'cloud', 'media',
   'me', 'site', 'online', 'top', 'rip', 'tools', 'co.in', 'org.in', 'mobi',
-  'click', 'run', 'space', 'website', 'icu', 'vip'
+  'click', 'run', 'space', 'website', 'icu', 'vip', 'net', 'org', 'info'
 ];
+
+// CentralNic / third-party vanity SLDs to exclude (they inherit fake root DR)
+const BANNED_SLDS = ['uk.com', 'uk.net', 'us.com', 'eu.com', 'cn.com', 'de.com', 'ru.com', 'sa.com', 'za.com', 'gr.com'];
 
 let allTlds = [];
 
@@ -54,7 +58,9 @@ async function fetchAllGoDaddyTlds() {
     });
     if (res.ok) {
       const list = await res.json();
-      return list.map(item => item.name.toLowerCase());
+      return list
+        .map(item => item.name.toLowerCase())
+        .filter(tld => !BANNED_SLDS.includes(tld));
     }
   } catch (e) {}
 
@@ -128,7 +134,13 @@ async function purchaseDomain(domain, priceUsd, drScore) {
     });
 
     const latency = Date.now() - startTime;
-    const result = await res.json();
+    const rawText = await res.text();
+    let result = {};
+    try {
+      result = rawText ? JSON.parse(rawText) : {};
+    } catch (e) {
+      result = { raw: rawText };
+    }
 
     if (res.ok && (result.orderId || result.total)) {
       purchaseCount++;
@@ -145,7 +157,7 @@ async function purchaseDomain(domain, priceUsd, drScore) {
       });
       return true;
     } else {
-      console.error(`\n[X] Purchase API returned:`, result);
+      console.error(`\n[X] Purchase API returned (${res.status}):`, result);
       await sendAlert({
         success: false,
         domain: domain,
@@ -249,7 +261,7 @@ async function evaluateTlds(tldList, tierName) {
 async function startSniper() {
   const isCI = process.env.GITHUB_ACTIONS === 'true';
   const sessionStartTime = Date.now();
-  const MAX_SESSION_MS = isCI ? 13.5 * 60 * 1000 : Infinity; // In GitHub Actions, runs 13.5 mins then exits cleanly for next cron
+  const MAX_SESSION_MS = isCI ? 13.5 * 60 * 1000 : Infinity;
 
   console.log(`====================================================`);
   console.log(`⚡ ULTRA HIGH-SPEED Y2MATE DOMAIN SNIPER ACTIVE`);
@@ -263,15 +275,12 @@ async function startSniper() {
   allTlds = await fetchAllGoDaddyTlds();
   const secondaryTlds = allTlds.filter(t => !ELITE_HOT_TLDS.includes(t));
 
-  // Initial scan
   await evaluateTlds(ELITE_HOT_TLDS, 'Tier 1 (Hot)');
 
-  // Loop execution
   while (purchaseCount < MAX_PURCHASES_SESSION && (Date.now() - sessionStartTime < MAX_SESSION_MS)) {
     await new Promise(r => setTimeout(r, HOT_TIER_INTERVAL_MS));
     await evaluateTlds(ELITE_HOT_TLDS, 'Tier 1 (Hot)');
 
-    // Every 60s, also check long-tail TLDs
     if (Math.floor((Date.now() - sessionStartTime) / 1000) % 60 < 4 && secondaryTlds.length > 0) {
       await evaluateTlds(secondaryTlds, 'Tier 2 (Full Catalog)');
     }

@@ -4,49 +4,17 @@ const GODADDY_TOKEN = process.env.GODADDY_TOKEN || 'gd_pat_mkTG9UGo5YyNUITj2bCJL
 const AHREFS_KEY = process.env.AHREFS_KEY || 'yAlv3OBM7h_8pwthcGYdFYbUIQ-TBoQndItVZLo7';
 const ALERT_EMAIL = process.env.ALERT_EMAIL || 'abbasgawali111@gmail.com';
 
-// Budget limits
-const MAX_PRICE_INR = 600;                     // ₹600 max purchase price
-const MAX_PRICE_USD = MAX_PRICE_INR / 84;      // ~$7.14 USD
+// ---------------------------------------------------------------------------
+// 🛡️ FINANCIAL SAFETY & WALLET GUARDS
+// ---------------------------------------------------------------------------
+const MAX_PRICE_INR = 500;                     // STRICT: Max ₹500 per domain
+const MAX_PRICE_USD = MAX_PRICE_INR / 84;      // ~$5.95 USD
 const MIN_AHREFS_DR = 5;                       // Auto-buy if Ahrefs DR >= 5
 
-// High-value clean TLDs to monitor continuously
-const TARGET_TLDS = [
-  'shop',      // High-priority (just had DR 18)
-  'is',        // Historic Y2Mate mirror (Icelandic)
-  'skin',      // Proven high-earning mirror
-  'uno',       // Proven 500k+ historical traffic
-  'app',       // Official app mirror
-  'pro',       // Premium authority brand
-  'download',  // Exact intent keyword
-  'video',     // Exact intent keyword
-  'tube',      // YouTube exact association
-  'to',        // Offshore bulletproof standard
-  'cc',        // Classic short clean brand
-  'fun',       // High CTR viral mirror
-  'stream',    // Direct media keyword
-  'live',      // Real-time conversion brand
-  'link',      // Direct shareable brand
-  'site',      // Classic mirror staple
-  'online',    // High search volume mirror
-  'top',       // Top tier cheap mirror
-  'icu',       // Low cost bulk mirror
-  'vip',       // High CTR VIP promo
-  'xyz',       // Modern universal standard
-  'me',        // Personal tool branding
-  'cloud',     // Fast cloud extraction association
-  'tv',        // Video industry staple
-  'media',     // Broad content authority
-  'rip',       // YouTube ripper staple
-  'mobi',      // Mobile device direct brand
-  'click',     // High CTR converter
-  'run',       // Fast action keyword
-  'space',     // Lightweight popular mirror
-  'website',   // High-trust generic
-  'tools',     // Utility niche standard
-  'org.in',    // Indian exact match
-  'co.in',     // Indian commercial
-  'in'         // India ccTLD
-];
+// HARD WALLET CEILING: Will NEVER buy more than this number of domains in a session
+// Even if 10 domains drop simultaneously, it will buy only 1 and immediately freeze!
+const MAX_PURCHASES_SESSION = 1;
+let purchaseCount = 0;
 
 // Default registrant info for GoDaddy automated purchase
 const REGISTRANT_DETAILS = {
@@ -63,6 +31,36 @@ const REGISTRANT_DETAILS = {
   }
 };
 
+let cachedTlds = [];
+
+// Fetches ALL 500+ official TLDs directly from GoDaddy API dynamically
+async function fetchAllGoDaddyTlds() {
+  try {
+    const res = await fetch('https://api.godaddy.com/v1/domains/tlds', {
+      headers: {
+        'Authorization': `Bearer ${GODADDY_TOKEN}`,
+        'Accept': 'application/json'
+      }
+    });
+    if (res.ok) {
+      const list = await res.json();
+      const tlds = list.map(item => item.name.toLowerCase());
+      console.log(`[+] Loaded ${tlds.length} official GoDaddy TLDs dynamically.`);
+      return tlds;
+    }
+  } catch (e) {
+    console.warn('[!] Failed to fetch dynamic TLD list, using fallback array:', e.message);
+  }
+
+  // Fallback if network glitch
+  return [
+    'shop', 'is', 'skin', 'uno', 'app', 'pro', 'download', 'video', 'tube', 'to',
+    'cc', 'fun', 'stream', 'live', 'link', 'site', 'online', 'top', 'icu', 'vip',
+    'xyz', 'me', 'cloud', 'tv', 'media', 'rip', 'mobi', 'click', 'run', 'space',
+    'website', 'tools', 'org.in', 'co.in', 'in', 'tech', 'digital', 'center'
+  ];
+}
+
 async function checkAvailability(domain) {
   try {
     const res = await fetch(`https://api.godaddy.com/v1/domains/available?domain=${encodeURIComponent(domain)}`, {
@@ -73,7 +71,6 @@ async function checkAvailability(domain) {
     });
 
     if (res.status === 429) {
-      console.warn(`[!] GoDaddy rate limit hit on ${domain}. Pausing 2s...`);
       await new Promise(r => setTimeout(r, 2000));
       return null;
     }
@@ -98,13 +95,18 @@ async function getAhrefsDR(domain) {
     const data = await res.json();
     return data?.domain_rating?.domain_rating || 0;
   } catch (err) {
-    console.error(`Ahrefs error for ${domain}:`, err.message);
     return 0;
   }
 }
 
 async function purchaseDomain(domain, priceUsd, drScore) {
-  console.log(`\n🚨 [SNIPER TRIGGERED] Executing instant purchase for ${domain} (Price: $${priceUsd}, Ahrefs DR: ${drScore})...`);
+  // FINANCIAL SAFETY CHECK
+  if (purchaseCount >= MAX_PURCHASES_SESSION) {
+    console.warn(`\n🛑 [SAFETY LOCK TRIGGERED] Reached maximum allowed purchases (${MAX_PURCHASES_SESSION}). Aborting to protect card funds.`);
+    return false;
+  }
+
+  console.log(`\n🚨 [SNIPER TRIGGERED] Executing instant purchase for ${domain} (Price: $${priceUsd.toFixed(2)}, Ahrefs DR: ${drScore})...`);
 
   const purchaseBody = {
     domain: domain,
@@ -134,7 +136,10 @@ async function purchaseDomain(domain, priceUsd, drScore) {
     console.log('[GoDaddy Purchase Response]:', result);
 
     if (res.ok && (result.orderId || result.total)) {
+      purchaseCount++;
       console.log(`🎉 [SUCCESS] Domain ${domain} SNIPED and registered! Order ID: ${result.orderId}`);
+      console.log(`🔒 [SAFETY GUARD] Total purchases in session: ${purchaseCount}/${MAX_PURCHASES_SESSION}. Sniper locked.`);
+      
       await sendAlert({
         success: true,
         domain: domain,
@@ -185,10 +190,26 @@ async function sendAlert(data) {
 }
 
 async function scanOnce() {
-  const timestamp = new Date().toLocaleTimeString();
-  process.stdout.write(`[${timestamp}] Checking ${TARGET_TLDS.length} TLDs... `);
+  if (purchaseCount >= MAX_PURCHASES_SESSION) {
+    console.log(`[Safety Lock] Purchase limit reached (${purchaseCount}/${MAX_PURCHASES_SESSION}). Standing down.`);
+    return;
+  }
 
-  for (const tld of TARGET_TLDS) {
+  if (cachedTlds.length === 0) {
+    cachedTlds = await fetchAllGoDaddyTlds();
+  }
+
+  // Prioritize high-demand TLDs first, then all other dynamic TLDs
+  const highPriority = ['shop', 'is', 'skin', 'uno', 'app', 'pro', 'download', 'video', 'tube', 'to', 'cc', 'fun', 'xyz', 'tv', 'in'];
+  const otherTlds = cachedTlds.filter(t => !highPriority.includes(t));
+  const fullScanList = [...highPriority, ...otherTlds];
+
+  const timestamp = new Date().toLocaleTimeString();
+  process.stdout.write(`[${timestamp}] Checking TLDs for y2mate... `);
+
+  for (const tld of fullScanList) {
+    if (purchaseCount >= MAX_PURCHASES_SESSION) break;
+
     const domain = `y2mate.${tld}`;
     const avail = await checkAvailability(domain);
 
@@ -198,16 +219,17 @@ async function scanOnce() {
 
       console.log(`\n\n🔍 DETECTED AVAILABLE: ${domain} | Price: ₹${priceInr} ($${priceUsd.toFixed(2)})`);
 
-      // 1. Price check filter
-      if (priceUsd <= MAX_PRICE_USD) {
-        // 2. Instant Ahrefs DR check
+      // 1. Strict Price Filter (<= ₹500)
+      if (priceInr <= MAX_PRICE_INR && priceUsd <= MAX_PRICE_USD) {
+        // 2. Instant Ahrefs DR Check
         console.log(`[+] Querying Ahrefs DR for ${domain}...`);
         const dr = await getAhrefsDR(domain);
         console.log(`[+] Ahrefs DR Score for ${domain}: ${dr}`);
 
         if (dr >= MIN_AHREFS_DR) {
           console.log(`⚡ [CRITICAL HIT] ${domain} has DR ${dr} >= ${MIN_AHREFS_DR}! Triggering instant auto-buy!`);
-          await purchaseDomain(domain, priceUsd, dr);
+          const bought = await purchaseDomain(domain, priceUsd, dr);
+          if (bought) break;
         } else {
           console.log(`[-] ${domain} DR (${dr}) is below threshold (${MIN_AHREFS_DR}). Skipped purchase.`);
         }
@@ -216,7 +238,7 @@ async function scanOnce() {
       }
     }
 
-    await new Promise(r => setTimeout(r, 250));
+    await new Promise(r => setTimeout(r, 200));
   }
 
   process.stdout.write(`Done.\n`);
@@ -224,18 +246,18 @@ async function scanOnce() {
 
 async function startSniper() {
   console.log(`====================================================`);
-  console.log(`🚀 Y2MATE INSTANT DOMAIN SNIPER BOT ACTIVE`);
-  console.log(`🎯 Target: exact y2mate.<tld> across ${TARGET_TLDS.length} high-value extensions`);
-  console.log(`💰 Max Purchase Price: ₹${MAX_PRICE_INR} (~$${MAX_PRICE_USD.toFixed(2)} USD)`);
+  console.log(`🚀 Y2MATE INSTANT ALL-TLD SNIPER ACTIVE`);
+  console.log(`🎯 Target: ANY official TLD for y2mate.*`);
+  console.log(`💰 Strict Max Price: ₹${MAX_PRICE_INR} (~$${MAX_PRICE_USD.toFixed(2)} USD)`);
   console.log(`📈 Min Ahrefs Domain Rating: ${MIN_AHREFS_DR}+`);
+  console.log(`🔒 Hard Safety Lock: Max ${MAX_PURCHASES_SESSION} purchase per session (card protection)`);
   console.log(`====================================================\n`);
 
-  // Run initial scan
+  cachedTlds = await fetchAllGoDaddyTlds();
   await scanOnce();
 
-  // If running in continuous mode (local or server daemon), loop every 20 seconds
   if (process.argv.includes('--loop') || process.env.SNIPER_CONTINUOUS === 'true') {
-    console.log(`[*] Continuous sniper loop engaged (checking every 20s)...`);
+    console.log(`[*] Continuous sniper loop engaged...`);
     setInterval(async () => {
       try {
         await scanOnce();

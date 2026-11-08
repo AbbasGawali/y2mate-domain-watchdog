@@ -52,7 +52,6 @@ async function fetchAllGoDaddyTlds() {
     console.warn('[!] Failed to fetch dynamic TLD list, using fallback array:', e.message);
   }
 
-  // Fallback if network glitch
   return [
     'shop', 'is', 'skin', 'uno', 'app', 'pro', 'download', 'video', 'tube', 'to',
     'cc', 'fun', 'stream', 'live', 'link', 'site', 'online', 'top', 'icu', 'vip',
@@ -100,13 +99,12 @@ async function getAhrefsDR(domain) {
 }
 
 async function purchaseDomain(domain, priceUsd, drScore) {
-  // FINANCIAL SAFETY CHECK
   if (purchaseCount >= MAX_PURCHASES_SESSION) {
-    console.warn(`\n🛑 [SAFETY LOCK TRIGGERED] Reached maximum allowed purchases (${MAX_PURCHASES_SESSION}). Aborting to protect card funds.`);
+    console.warn(`\n🛑 [SAFETY LOCK TRIGGERED] Reached maximum allowed purchases (${MAX_PURCHASES_SESSION}). Aborting.`);
     return false;
   }
 
-  console.log(`\n🚨 [SNIPER TRIGGERED] Executing instant purchase for ${domain} (Price: $${priceUsd.toFixed(2)}, Ahrefs DR: ${drScore})...`);
+  console.log(`\n🚨 [SNIPER TRIGGERED] Executing instant purchase for HIGHEST DR winner: ${domain} (DR: ${drScore}, Price: $${priceUsd.toFixed(2)} / ₹${Math.round(priceUsd * 84)})...`);
 
   const purchaseBody = {
     domain: domain,
@@ -137,7 +135,7 @@ async function purchaseDomain(domain, priceUsd, drScore) {
 
     if (res.ok && (result.orderId || result.total)) {
       purchaseCount++;
-      console.log(`🎉 [SUCCESS] Domain ${domain} SNIPED and registered! Order ID: ${result.orderId}`);
+      console.log(`🎉 [SUCCESS] Winner ${domain} (DR ${drScore}) SNIPED! Order ID: ${result.orderId}`);
       console.log(`🔒 [SAFETY GUARD] Total purchases in session: ${purchaseCount}/${MAX_PURCHASES_SESSION}. Sniper locked.`);
       
       await sendAlert({
@@ -146,7 +144,7 @@ async function purchaseDomain(domain, priceUsd, drScore) {
         priceUsd: priceUsd,
         drScore: drScore,
         orderId: result.orderId,
-        details: 'Domain bought automatically via GoDaddy API!'
+        details: 'Highest DR domain bought automatically via GoDaddy API!'
       });
       return true;
     } else {
@@ -199,7 +197,6 @@ async function scanOnce() {
     cachedTlds = await fetchAllGoDaddyTlds();
   }
 
-  // Prioritize high-demand TLDs first, then all other dynamic TLDs
   const highPriority = ['shop', 'is', 'skin', 'uno', 'app', 'pro', 'download', 'video', 'tube', 'to', 'cc', 'fun', 'xyz', 'tv', 'in'];
   const otherTlds = cachedTlds.filter(t => !highPriority.includes(t));
   const fullScanList = [...highPriority, ...otherTlds];
@@ -207,9 +204,10 @@ async function scanOnce() {
   const timestamp = new Date().toLocaleTimeString();
   process.stdout.write(`[${timestamp}] Checking TLDs for y2mate... `);
 
-  for (const tld of fullScanList) {
-    if (purchaseCount >= MAX_PURCHASES_SESSION) break;
+  // Collect all eligible candidates in this cycle
+  const eligibleCandidates = [];
 
+  for (const tld of fullScanList) {
     const domain = `y2mate.${tld}`;
     const avail = await checkAvailability(domain);
 
@@ -217,31 +215,44 @@ async function scanOnce() {
       const priceUsd = (avail.price || 0) / 1000000;
       const priceInr = Math.round(priceUsd * 84);
 
-      console.log(`\n\n🔍 DETECTED AVAILABLE: ${domain} | Price: ₹${priceInr} ($${priceUsd.toFixed(2)})`);
-
-      // 1. Strict Price Filter (<= ₹500)
+      // Check price ceiling (<= ₹500)
       if (priceInr <= MAX_PRICE_INR && priceUsd <= MAX_PRICE_USD) {
-        // 2. Instant Ahrefs DR Check
-        console.log(`[+] Querying Ahrefs DR for ${domain}...`);
+        console.log(`\n\n🔍 DETECTED UNDER ₹500: ${domain} (₹${priceInr}) | Checking Ahrefs DR...`);
         const dr = await getAhrefsDR(domain);
-        console.log(`[+] Ahrefs DR Score for ${domain}: ${dr}`);
+        console.log(`[+] ${domain} -> Ahrefs DR: ${dr}`);
 
         if (dr >= MIN_AHREFS_DR) {
-          console.log(`⚡ [CRITICAL HIT] ${domain} has DR ${dr} >= ${MIN_AHREFS_DR}! Triggering instant auto-buy!`);
-          const bought = await purchaseDomain(domain, priceUsd, dr);
-          if (bought) break;
-        } else {
-          console.log(`[-] ${domain} DR (${dr}) is below threshold (${MIN_AHREFS_DR}). Skipped purchase.`);
+          eligibleCandidates.push({
+            domain,
+            priceUsd,
+            priceInr,
+            dr
+          });
         }
-      } else {
-        console.log(`[-] ${domain} Price (₹${priceInr}) exceeds budget limit (₹${MAX_PRICE_INR}). Skipped.`);
       }
     }
 
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise(r => setTimeout(r, 180));
   }
 
   process.stdout.write(`Done.\n`);
+
+  // If multiple domains qualified, sort descending by DR to pick the absolute highest value!
+  if (eligibleCandidates.length > 0) {
+    eligibleCandidates.sort((a, b) => b.dr - a.dr);
+
+    console.log(`\n====================================================`);
+    console.log(`🏆 [CANDIDATE RANKING] Found ${eligibleCandidates.length} eligible drop(s):`);
+    eligibleCandidates.forEach((c, idx) => {
+      console.log(`   #${idx + 1}: ${c.domain} | Ahrefs DR: ${c.dr} | Price: ₹${c.priceInr}`);
+    });
+
+    const winner = eligibleCandidates[0];
+    console.log(`🎯 SELECTED HIGHEST DR WINNER: ${winner.domain} (DR: ${winner.dr})`);
+    console.log(`====================================================\n`);
+
+    await purchaseDomain(winner.domain, winner.priceUsd, winner.dr);
+  }
 }
 
 async function startSniper() {
@@ -249,7 +260,7 @@ async function startSniper() {
   console.log(`🚀 Y2MATE INSTANT ALL-TLD SNIPER ACTIVE`);
   console.log(`🎯 Target: ANY official TLD for y2mate.*`);
   console.log(`💰 Strict Max Price: ₹${MAX_PRICE_INR} (~$${MAX_PRICE_USD.toFixed(2)} USD)`);
-  console.log(`📈 Min Ahrefs Domain Rating: ${MIN_AHREFS_DR}+`);
+  console.log(`📈 Min Ahrefs Domain Rating: ${MIN_AHREFS_DR}+ (Ranks and buys highest DR winner)`);
   console.log(`🔒 Hard Safety Lock: Max ${MAX_PURCHASES_SESSION} purchase per session (card protection)`);
   console.log(`====================================================\n`);
 

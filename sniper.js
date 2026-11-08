@@ -34,19 +34,20 @@ const REGISTRANT_DETAILS = {
   }
 };
 
-// Elite Tier: Real top-level extensions where genuine Y2Mate drops and traffic happen
-// (Excludes CentralNic vanity subdomains like uk.com/uk.net that inherit fake DR)
+// Elite Tier: Strictly SINGLE-DOT real TLDs only (no .uk.com, no .uk.net)
 const ELITE_HOT_TLDS = [
   'shop', 'is', 'skin', 'uno', 'app', 'pro', 'download', 'video', 'tube', 'to',
   'cc', 'fun', 'xyz', 'tv', 'in', 'live', 'stream', 'link', 'cloud', 'media',
-  'me', 'site', 'online', 'top', 'rip', 'tools', 'co.in', 'org.in', 'mobi',
-  'click', 'run', 'space', 'website', 'icu', 'vip', 'net', 'org', 'info'
+  'me', 'site', 'online', 'top', 'rip', 'tools', 'mobi', 'click', 'run',
+  'space', 'website', 'icu', 'vip', 'net', 'org', 'info'
 ];
 
-// CentralNic / third-party vanity SLDs to exclude (they inherit fake root DR)
-const BANNED_SLDS = ['uk.com', 'uk.net', 'us.com', 'eu.com', 'cn.com', 'de.com', 'ru.com', 'sa.com', 'za.com', 'gr.com'];
-
 let allTlds = [];
+
+// Enforce strictly SINGLE-DOT TLDs (e.g. y2mate.shop -> allowed, y2mate.uk.com -> blocked)
+function isCleanSingleDotTld(tld) {
+  return tld && !tld.includes('.');
+}
 
 async function fetchAllGoDaddyTlds() {
   try {
@@ -60,7 +61,7 @@ async function fetchAllGoDaddyTlds() {
       const list = await res.json();
       return list
         .map(item => item.name.toLowerCase())
-        .filter(tld => !BANNED_SLDS.includes(tld));
+        .filter(isCleanSingleDotTld);
     }
   } catch (e) {}
 
@@ -153,34 +154,59 @@ async function purchaseDomain(domain, priceUsd, drScore) {
         priceUsd: priceUsd,
         drScore: drScore,
         orderId: result.orderId,
-        details: `Drop beaten and registered in ${latency}ms!`
+        buyLink: `https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck=${encodeURIComponent(domain)}`,
+        statusMessage: `Successfully bought via GoDaddy API in ${latency}ms!`
       });
       return true;
     } else {
-      console.error(`\n[X] Purchase API returned (${res.status}):`, result);
+      console.error(`\n[X] Purchase API declined (${res.status}):`, result);
+      console.log(`📧 Dispatching urgent email alert with 1-click buy link to ${ALERT_EMAIL}...`);
+      
       await sendAlert({
         success: false,
         domain: domain,
         priceUsd: priceUsd,
         drScore: drScore,
         error: result.message || JSON.stringify(result),
-        directBuyUrl: `https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck=${encodeURIComponent(domain)}`
+        buyLink: `https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck=${encodeURIComponent(domain)}`,
+        statusMessage: 'Auto-buy declined (No default card / gateway rejection). Click below to buy manually immediately!'
       });
       return false;
     }
   } catch (err) {
     console.error(`\n[!] Exception during purchase:`, err.message);
+    await sendAlert({
+      success: false,
+      domain: domain,
+      priceUsd: priceUsd,
+      drScore: drScore,
+      error: err.message,
+      buyLink: `https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck=${encodeURIComponent(domain)}`,
+      statusMessage: 'Exception during purchase. Direct 1-click buy link attached.'
+    });
     return false;
   }
 }
 
 async function sendAlert(data) {
+  const directLink = `https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck=${encodeURIComponent(data.domain)}`;
   const subject = data.success
-    ? `🎯 [SNIPED] Bought ${data.domain} (Ahrefs DR: ${data.drScore}, ₹${Math.round(data.priceUsd * 84)})!`
-    : `⚠️ [ACTION REQUIRED] ${data.domain} Dropped (Ahrefs DR: ${data.drScore}) - Buy Manually Now!`;
+    ? `🎯 [SNIPED] Successfully Bought ${data.domain} (Ahrefs DR: ${data.drScore}, ₹${Math.round(data.priceUsd * 84)})`
+    : `🚨 [DROP DETECTED] ${data.domain} is LIVE (Ahrefs DR: ${data.drScore}, ₹${Math.round(data.priceUsd * 84)}) - BUY NOW`;
+
+  const payload = {
+    _subject: subject,
+    Domain: data.domain,
+    Ahrefs_DR: data.drScore,
+    Price_INR: `₹${Math.round(data.priceUsd * 84)}`,
+    Price_USD: `$${data.priceUsd.toFixed(2)}`,
+    One_Click_Buy_Link: directLink,
+    Status: data.statusMessage || (data.success ? 'Purchased' : 'Action Required'),
+    Error_Details: data.error || 'None'
+  };
 
   try {
-    await fetch(`https://formsubmit.co/ajax/${ALERT_EMAIL}`, {
+    const res = await fetch(`https://formsubmit.co/ajax/${ALERT_EMAIL}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -188,12 +214,12 @@ async function sendAlert(data) {
         'Origin': 'https://y2mate.cyou',
         'Referer': 'https://y2mate.cyou/'
       },
-      body: JSON.stringify({
-        _subject: subject,
-        ...data
-      })
+      body: JSON.stringify(payload)
     });
-  } catch (e) {}
+    console.log(`[FormSubmit Email] Sent to ${ALERT_EMAIL} (Status: ${res.status})`);
+  } catch (e) {
+    console.error(`[FormSubmit Email Error]:`, e.message);
+  }
 }
 
 async function mapConcurrent(items, limit, fn) {
@@ -212,12 +238,16 @@ async function evaluateTlds(tldList, tierName) {
   const startTime = Date.now();
   const availableDomains = [];
 
-  await mapConcurrent(tldList, CONCURRENCY_LIMIT, async (tld) => {
+  // Filter: Strictly single-dot TLDs
+  const cleanList = tldList.filter(isCleanSingleDotTld);
+
+  await mapConcurrent(cleanList, CONCURRENCY_LIMIT, async (tld) => {
     if (purchaseCount >= MAX_PURCHASES_SESSION) return;
     const domain = `y2mate.${tld}`;
     const avail = await checkAvailability(domain);
 
-    if (avail && avail.available) {
+    // Definite check & availability confirmation
+    if (avail && avail.available && avail.definitive) {
       const priceUsd = (avail.price || 0) / 1000000;
       const priceInr = Math.round(priceUsd * 84);
 
@@ -230,7 +260,7 @@ async function evaluateTlds(tldList, tierName) {
   const duration = Date.now() - startTime;
 
   if (availableDomains.length > 0) {
-    console.log(`\n⚡ [${new Date().toLocaleTimeString()}] Found ${availableDomains.length} drop(s) under ₹500 in ${duration}ms! Checking Ahrefs DR in parallel...`);
+    console.log(`\n⚡ [${new Date().toLocaleTimeString()}] Found ${availableDomains.length} real drop(s) under ₹500 in ${duration}ms! Checking Ahrefs DR...`);
 
     const scored = await Promise.all(
       availableDomains.map(async (item) => {
@@ -242,6 +272,7 @@ async function evaluateTlds(tldList, tierName) {
     const qualified = scored.filter(c => c.dr >= MIN_AHREFS_DR);
 
     if (qualified.length > 0) {
+      // Sort descending by DR to pick the absolute highest value winner
       qualified.sort((a, b) => b.dr - a.dr);
 
       console.log(`\n🏆 [LEADERBOARD] Qualified drops:`);
@@ -255,7 +286,7 @@ async function evaluateTlds(tldList, tierName) {
     }
   }
 
-  process.stdout.write(`\r[${new Date().toLocaleTimeString()}] ⚡ ${tierName}: ${tldList.length} TLDs checked in ${duration}ms - Clean.`);
+  process.stdout.write(`\r[${new Date().toLocaleTimeString()}] ⚡ ${tierName}: ${cleanList.length} clean single-dot TLDs checked in ${duration}ms - Clean.`);
 }
 
 async function startSniper() {
@@ -267,7 +298,8 @@ async function startSniper() {
   console.log(`⚡ ULTRA HIGH-SPEED Y2MATE DOMAIN SNIPER ACTIVE`);
   console.log(`🚀 Architecture: 8 Parallel Async Threads`);
   console.log(`🔥 Mode: ${isCI ? 'GitHub Actions Continuous Pipeline' : 'Local 24/7 Daemon'}`);
-  console.log(`⏱️ Hot Loop: 35 Tier 1 TLDs every 3s`);
+  console.log(`🛡️ Filter: Strictly Single-Dot TLDs Only (No .uk.com, no .uk.net)`);
+  console.log(`⏱️ Hot Loop: 35 Clean Tier 1 TLDs every 3s`);
   console.log(`💰 Max Price: ₹${MAX_PRICE_INR} | Min DR: ${MIN_AHREFS_DR}+`);
   console.log(`🔒 Safety: 1 Purchase Limit`);
   console.log(`====================================================\n`);

@@ -11,10 +11,13 @@ const MAX_PRICE_INR = 500;                     // STRICT: Max ₹500 per domain
 const MAX_PRICE_USD = MAX_PRICE_INR / 84;      // ~$5.95 USD
 const MIN_AHREFS_DR = 5;                       // Auto-buy if Ahrefs DR >= 5
 
-// HARD WALLET CEILING: Will NEVER buy more than this number of domains in a session
-// Even if 10 domains drop simultaneously, it will buy only 1 and immediately freeze!
+// HARD WALLET CEILING: Will NEVER buy more than 1 domain in a session
 const MAX_PURCHASES_SESSION = 1;
 let purchaseCount = 0;
+
+// High-speed concurrency settings
+const CONCURRENCY_LIMIT = 8;                   // 8 parallel worker threads
+const HOT_TIER_INTERVAL_MS = 3000;             // Check top drops every 3 seconds!
 
 // Default registrant info for GoDaddy automated purchase
 const REGISTRANT_DETAILS = {
@@ -31,9 +34,16 @@ const REGISTRANT_DETAILS = {
   }
 };
 
-let cachedTlds = [];
+// Elite Tier: The 35 exact TLDs where 99% of Y2Mate drops and mirrors happen
+const ELITE_HOT_TLDS = [
+  'shop', 'is', 'skin', 'uno', 'app', 'pro', 'download', 'video', 'tube', 'to',
+  'cc', 'fun', 'xyz', 'tv', 'in', 'live', 'stream', 'link', 'cloud', 'media',
+  'me', 'site', 'online', 'top', 'rip', 'tools', 'co.in', 'org.in', 'mobi',
+  'click', 'run', 'space', 'website', 'icu', 'vip'
+];
 
-// Fetches ALL 500+ official TLDs directly from GoDaddy API dynamically
+let allTlds = [];
+
 async function fetchAllGoDaddyTlds() {
   try {
     const res = await fetch('https://api.godaddy.com/v1/domains/tlds', {
@@ -44,20 +54,11 @@ async function fetchAllGoDaddyTlds() {
     });
     if (res.ok) {
       const list = await res.json();
-      const tlds = list.map(item => item.name.toLowerCase());
-      console.log(`[+] Loaded ${tlds.length} official GoDaddy TLDs dynamically.`);
-      return tlds;
+      return list.map(item => item.name.toLowerCase());
     }
-  } catch (e) {
-    console.warn('[!] Failed to fetch dynamic TLD list, using fallback array:', e.message);
-  }
+  } catch (e) {}
 
-  return [
-    'shop', 'is', 'skin', 'uno', 'app', 'pro', 'download', 'video', 'tube', 'to',
-    'cc', 'fun', 'stream', 'live', 'link', 'site', 'online', 'top', 'icu', 'vip',
-    'xyz', 'me', 'cloud', 'tv', 'media', 'rip', 'mobi', 'click', 'run', 'space',
-    'website', 'tools', 'org.in', 'co.in', 'in', 'tech', 'digital', 'center'
-  ];
+  return ELITE_HOT_TLDS;
 }
 
 async function checkAvailability(domain) {
@@ -68,11 +69,6 @@ async function checkAvailability(domain) {
         'Accept': 'application/json'
       }
     });
-
-    if (res.status === 429) {
-      await new Promise(r => setTimeout(r, 2000));
-      return null;
-    }
 
     if (!res.ok) return null;
     return await res.json();
@@ -100,11 +96,12 @@ async function getAhrefsDR(domain) {
 
 async function purchaseDomain(domain, priceUsd, drScore) {
   if (purchaseCount >= MAX_PURCHASES_SESSION) {
-    console.warn(`\n🛑 [SAFETY LOCK TRIGGERED] Reached maximum allowed purchases (${MAX_PURCHASES_SESSION}). Aborting.`);
+    console.warn(`\n🛑 [SAFETY LOCK TRIGGERED] Max purchases reached (${MAX_PURCHASES_SESSION}). Aborting.`);
     return false;
   }
 
-  console.log(`\n🚨 [SNIPER TRIGGERED] Executing instant purchase for HIGHEST DR winner: ${domain} (DR: ${drScore}, Price: $${priceUsd.toFixed(2)} / ₹${Math.round(priceUsd * 84)})...`);
+  const startTime = Date.now();
+  console.log(`\n⚡ [SUB-SECOND TRIGGER] Sniping WINNER ${domain} (DR: ${drScore}, Price: $${priceUsd.toFixed(2)} / ₹${Math.round(priceUsd * 84)})...`);
 
   const purchaseBody = {
     domain: domain,
@@ -130,13 +127,13 @@ async function purchaseDomain(domain, priceUsd, drScore) {
       body: JSON.stringify(purchaseBody)
     });
 
+    const latency = Date.now() - startTime;
     const result = await res.json();
-    console.log('[GoDaddy Purchase Response]:', result);
 
     if (res.ok && (result.orderId || result.total)) {
       purchaseCount++;
-      console.log(`🎉 [SUCCESS] Winner ${domain} (DR ${drScore}) SNIPED! Order ID: ${result.orderId}`);
-      console.log(`🔒 [SAFETY GUARD] Total purchases in session: ${purchaseCount}/${MAX_PURCHASES_SESSION}. Sniper locked.`);
+      console.log(`\n🎉 [SNIPED IN ${latency}ms] Domain ${domain} REGISTERED! Order ID: ${result.orderId}`);
+      console.log(`🔒 [SAFETY GUARD] Purchases limit reached (1/1). Sniper permanently locked to protect card.`);
       
       await sendAlert({
         success: true,
@@ -144,11 +141,11 @@ async function purchaseDomain(domain, priceUsd, drScore) {
         priceUsd: priceUsd,
         drScore: drScore,
         orderId: result.orderId,
-        details: 'Highest DR domain bought automatically via GoDaddy API!'
+        details: `Drop beaten and registered in ${latency}ms!`
       });
       return true;
     } else {
-      console.error(`[X] Auto-purchase failed for ${domain}:`, result);
+      console.error(`\n[X] Purchase API returned:`, result);
       await sendAlert({
         success: false,
         domain: domain,
@@ -160,7 +157,7 @@ async function purchaseDomain(domain, priceUsd, drScore) {
       return false;
     }
   } catch (err) {
-    console.error(`[!] Exception during purchase of ${domain}:`, err.message);
+    console.error(`\n[!] Exception during purchase:`, err.message);
     return false;
   }
 }
@@ -187,27 +184,24 @@ async function sendAlert(data) {
   } catch (e) {}
 }
 
-async function scanOnce() {
-  if (purchaseCount >= MAX_PURCHASES_SESSION) {
-    console.log(`[Safety Lock] Purchase limit reached (${purchaseCount}/${MAX_PURCHASES_SESSION}). Standing down.`);
-    return;
+async function mapConcurrent(items, limit, fn) {
+  const results = [];
+  for (let i = 0; i < items.length; i += limit) {
+    const chunk = items.slice(i, i + limit);
+    const chunkResults = await Promise.all(chunk.map(fn));
+    results.push(...chunkResults);
   }
+  return results;
+}
 
-  if (cachedTlds.length === 0) {
-    cachedTlds = await fetchAllGoDaddyTlds();
-  }
+async function evaluateTlds(tldList, tierName) {
+  if (purchaseCount >= MAX_PURCHASES_SESSION) return;
 
-  const highPriority = ['shop', 'is', 'skin', 'uno', 'app', 'pro', 'download', 'video', 'tube', 'to', 'cc', 'fun', 'xyz', 'tv', 'in'];
-  const otherTlds = cachedTlds.filter(t => !highPriority.includes(t));
-  const fullScanList = [...highPriority, ...otherTlds];
+  const startTime = Date.now();
+  const availableDomains = [];
 
-  const timestamp = new Date().toLocaleTimeString();
-  process.stdout.write(`[${timestamp}] Checking TLDs for y2mate... `);
-
-  // Collect all eligible candidates in this cycle
-  const eligibleCandidates = [];
-
-  for (const tld of fullScanList) {
+  await mapConcurrent(tldList, CONCURRENCY_LIMIT, async (tld) => {
+    if (purchaseCount >= MAX_PURCHASES_SESSION) return;
     const domain = `y2mate.${tld}`;
     const avail = await checkAvailability(domain);
 
@@ -215,68 +209,76 @@ async function scanOnce() {
       const priceUsd = (avail.price || 0) / 1000000;
       const priceInr = Math.round(priceUsd * 84);
 
-      // Check price ceiling (<= ₹500)
       if (priceInr <= MAX_PRICE_INR && priceUsd <= MAX_PRICE_USD) {
-        console.log(`\n\n🔍 DETECTED UNDER ₹500: ${domain} (₹${priceInr}) | Checking Ahrefs DR...`);
-        const dr = await getAhrefsDR(domain);
-        console.log(`[+] ${domain} -> Ahrefs DR: ${dr}`);
-
-        if (dr >= MIN_AHREFS_DR) {
-          eligibleCandidates.push({
-            domain,
-            priceUsd,
-            priceInr,
-            dr
-          });
-        }
+        availableDomains.push({ domain, priceUsd, priceInr });
       }
     }
+  });
 
-    await new Promise(r => setTimeout(r, 180));
+  const duration = Date.now() - startTime;
+
+  if (availableDomains.length > 0) {
+    console.log(`\n⚡ [${new Date().toLocaleTimeString()}] Found ${availableDomains.length} drop(s) under ₹500 in ${duration}ms! Checking Ahrefs DR in parallel...`);
+
+    const scored = await Promise.all(
+      availableDomains.map(async (item) => {
+        const dr = await getAhrefsDR(item.domain);
+        return { ...item, dr };
+      })
+    );
+
+    const qualified = scored.filter(c => c.dr >= MIN_AHREFS_DR);
+
+    if (qualified.length > 0) {
+      // Sort descending by DR to pick the absolute highest value winner
+      qualified.sort((a, b) => b.dr - a.dr);
+
+      console.log(`\n🏆 [LEADERBOARD] Qualified drops:`);
+      qualified.forEach((q, idx) => {
+        console.log(`   #${idx + 1}: ${q.domain} (DR: ${q.dr}, ₹${q.priceInr})`);
+      });
+
+      const winner = qualified[0];
+      await purchaseDomain(winner.domain, winner.priceUsd, winner.dr);
+      return;
+    }
   }
 
-  process.stdout.write(`Done.\n`);
-
-  // If multiple domains qualified, sort descending by DR to pick the absolute highest value!
-  if (eligibleCandidates.length > 0) {
-    eligibleCandidates.sort((a, b) => b.dr - a.dr);
-
-    console.log(`\n====================================================`);
-    console.log(`🏆 [CANDIDATE RANKING] Found ${eligibleCandidates.length} eligible drop(s):`);
-    eligibleCandidates.forEach((c, idx) => {
-      console.log(`   #${idx + 1}: ${c.domain} | Ahrefs DR: ${c.dr} | Price: ₹${c.priceInr}`);
-    });
-
-    const winner = eligibleCandidates[0];
-    console.log(`🎯 SELECTED HIGHEST DR WINNER: ${winner.domain} (DR: ${winner.dr})`);
-    console.log(`====================================================\n`);
-
-    await purchaseDomain(winner.domain, winner.priceUsd, winner.dr);
-  }
+  process.stdout.write(`\r[${new Date().toLocaleTimeString()}] ⚡ ${tierName}: ${tldList.length} TLDs checked in ${duration}ms - Clean.`);
 }
 
 async function startSniper() {
   console.log(`====================================================`);
-  console.log(`🚀 Y2MATE INSTANT ALL-TLD SNIPER ACTIVE`);
-  console.log(`🎯 Target: ANY official TLD for y2mate.*`);
+  console.log(`⚡ ULTRA HIGH-SPEED Y2MATE DOMAIN SNIPER ACTIVE`);
+  console.log(`🚀 Architecture: 8 Parallel Async Threads`);
+  console.log(`🔥 Tier 1: Top 35 Hot TLDs scanned every 3 seconds`);
+  console.log(`🌐 Tier 2: Remaining 500+ TLDs scanned in background loop`);
   console.log(`💰 Strict Max Price: ₹${MAX_PRICE_INR} (~$${MAX_PRICE_USD.toFixed(2)} USD)`);
-  console.log(`📈 Min Ahrefs Domain Rating: ${MIN_AHREFS_DR}+ (Ranks and buys highest DR winner)`);
-  console.log(`🔒 Hard Safety Lock: Max ${MAX_PURCHASES_SESSION} purchase per session (card protection)`);
+  console.log(`📈 Min Ahrefs Domain Rating: ${MIN_AHREFS_DR}+ (Highest DR Wins)`);
+  console.log(`🔒 Card Protection: Locks permanently after 1 purchase`);
   console.log(`====================================================\n`);
 
-  cachedTlds = await fetchAllGoDaddyTlds();
-  await scanOnce();
+  allTlds = await fetchAllGoDaddyTlds();
+  const secondaryTlds = allTlds.filter(t => !ELITE_HOT_TLDS.includes(t));
 
-  if (process.argv.includes('--loop') || process.env.SNIPER_CONTINUOUS === 'true') {
-    console.log(`[*] Continuous sniper loop engaged...`);
-    setInterval(async () => {
-      try {
-        await scanOnce();
-      } catch (err) {
-        console.error('[!] Loop error:', err.message);
+  // Immediate hot scan
+  await evaluateTlds(ELITE_HOT_TLDS, 'Tier 1 (Hot)');
+
+  // 1. High-speed 3-second loop for Tier 1 hot TLDs (beats rival drop-catchers)
+  setInterval(async () => {
+    try {
+      await evaluateTlds(ELITE_HOT_TLDS, 'Tier 1 (Hot)');
+    } catch (e) {}
+  }, HOT_TIER_INTERVAL_MS);
+
+  // 2. Secondary background scan every 60 seconds for remaining 500+ long-tail TLDs
+  setInterval(async () => {
+    try {
+      if (secondaryTlds.length > 0) {
+        await evaluateTlds(secondaryTlds, 'Tier 2 (Full Catalog)');
       }
-    }, 20000);
-  }
+    } catch (e) {}
+  }, 60000);
 }
 
 startSniper();

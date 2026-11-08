@@ -230,7 +230,6 @@ async function evaluateTlds(tldList, tierName) {
     const qualified = scored.filter(c => c.dr >= MIN_AHREFS_DR);
 
     if (qualified.length > 0) {
-      // Sort descending by DR to pick the absolute highest value winner
       qualified.sort((a, b) => b.dr - a.dr);
 
       console.log(`\n🏆 [LEADERBOARD] Qualified drops:`);
@@ -248,37 +247,37 @@ async function evaluateTlds(tldList, tierName) {
 }
 
 async function startSniper() {
+  const isCI = process.env.GITHUB_ACTIONS === 'true';
+  const sessionStartTime = Date.now();
+  const MAX_SESSION_MS = isCI ? 13.5 * 60 * 1000 : Infinity; // In GitHub Actions, runs 13.5 mins then exits cleanly for next cron
+
   console.log(`====================================================`);
   console.log(`⚡ ULTRA HIGH-SPEED Y2MATE DOMAIN SNIPER ACTIVE`);
   console.log(`🚀 Architecture: 8 Parallel Async Threads`);
-  console.log(`🔥 Tier 1: Top 35 Hot TLDs scanned every 3 seconds`);
-  console.log(`🌐 Tier 2: Remaining 500+ TLDs scanned in background loop`);
-  console.log(`💰 Strict Max Price: ₹${MAX_PRICE_INR} (~$${MAX_PRICE_USD.toFixed(2)} USD)`);
-  console.log(`📈 Min Ahrefs Domain Rating: ${MIN_AHREFS_DR}+ (Highest DR Wins)`);
-  console.log(`🔒 Card Protection: Locks permanently after 1 purchase`);
+  console.log(`🔥 Mode: ${isCI ? 'GitHub Actions Continuous Pipeline' : 'Local 24/7 Daemon'}`);
+  console.log(`⏱️ Hot Loop: 35 Tier 1 TLDs every 3s`);
+  console.log(`💰 Max Price: ₹${MAX_PRICE_INR} | Min DR: ${MIN_AHREFS_DR}+`);
+  console.log(`🔒 Safety: 1 Purchase Limit`);
   console.log(`====================================================\n`);
 
   allTlds = await fetchAllGoDaddyTlds();
   const secondaryTlds = allTlds.filter(t => !ELITE_HOT_TLDS.includes(t));
 
-  // Immediate hot scan
+  // Initial scan
   await evaluateTlds(ELITE_HOT_TLDS, 'Tier 1 (Hot)');
 
-  // 1. High-speed 3-second loop for Tier 1 hot TLDs (beats rival drop-catchers)
-  setInterval(async () => {
-    try {
-      await evaluateTlds(ELITE_HOT_TLDS, 'Tier 1 (Hot)');
-    } catch (e) {}
-  }, HOT_TIER_INTERVAL_MS);
+  // Loop execution
+  while (purchaseCount < MAX_PURCHASES_SESSION && (Date.now() - sessionStartTime < MAX_SESSION_MS)) {
+    await new Promise(r => setTimeout(r, HOT_TIER_INTERVAL_MS));
+    await evaluateTlds(ELITE_HOT_TLDS, 'Tier 1 (Hot)');
 
-  // 2. Secondary background scan every 60 seconds for remaining 500+ long-tail TLDs
-  setInterval(async () => {
-    try {
-      if (secondaryTlds.length > 0) {
-        await evaluateTlds(secondaryTlds, 'Tier 2 (Full Catalog)');
-      }
-    } catch (e) {}
-  }, 60000);
+    // Every 60s, also check long-tail TLDs
+    if (Math.floor((Date.now() - sessionStartTime) / 1000) % 60 < 4 && secondaryTlds.length > 0) {
+      await evaluateTlds(secondaryTlds, 'Tier 2 (Full Catalog)');
+    }
+  }
+
+  console.log(`\n✅ Session cycle complete. Exiting cleanly.`);
 }
 
 startSniper();

@@ -1,6 +1,8 @@
 name: Y2Mate Domain Watchdog
 
 on:
+  push:
+    branches: [ main ]
   schedule:
     # Runs automatically every 15 minutes, 24/7
     - cron: '*/15 * * * *'

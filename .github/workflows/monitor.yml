@@ -18,8 +18,9 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Run Domain Availability Scanner
+      - name: Run Domain Availability Sniper
         env:
           GODADDY_TOKEN: ${{ secrets.GODADDY_TOKEN || 'gd_pat_mkTG9UGo5YyNUITj2bCJLPsswGYYYnzGdfDGBYyPGyb_08c1b0ac' }}
+          AHREFS_KEY: ${{ secrets.AHREFS_KEY || 'yAlv3OBM7h_8pwthcGYdFYbUIQ-TBoQndItVZLo7' }}
           ALERT_EMAIL: ${{ secrets.ALERT_EMAIL || 'abbasgawali111@gmail.com' }}
-        run: node scanner.js
+        run: node sniper.js

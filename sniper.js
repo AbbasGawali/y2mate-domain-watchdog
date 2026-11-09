@@ -218,9 +218,14 @@ async function sendAlert(data) {
       },
       body: JSON.stringify(payload)
     });
-    console.log(`[FormSubmit Email] Sent to ${ALERT_EMAIL} (Status: ${res.status})`);
-    if (res.status === 403) {
-      console.log(`ℹ️ [NOTE] FormSubmit requires a 1-time activation email click on ${ALERT_EMAIL}. Check inbox/spam!`);
+    const result = await res.json().catch(() => ({}));
+    if (result && (result.success === 'true' || result.success === true)) {
+      console.log(`✅ [FormSubmit Email] Successfully delivered alert to ${ALERT_EMAIL}!`);
+    } else {
+      console.error(`❌ [FormSubmit Email Failed]: ${result.message || 'Unknown response'}`);
+      if (result.message && result.message.includes('Activation')) {
+        console.error(`🚨 ACTION REQUIRED: Open ${ALERT_EMAIL} inbox/spam and click the "Activate Form" button from FormSubmit!`);
+      }
     }
   } catch (e) {
     console.error(`[FormSubmit Email Error]:`, e.message);

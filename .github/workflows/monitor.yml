@@ -4,13 +4,18 @@ on:
   push:
     branches: [ main ]
   schedule:
-    # Runs automatically every 15 minutes, 24/7
-    - cron: '*/15 * * * *'
-  workflow_dispatch: # Allows manual trigger from GitHub UI anytime
+    # Triggers regularly 24/7
+    - cron: '*/30 * * * *'
+  workflow_dispatch: # Allows manual trigger anytime
+
+concurrency:
+  group: domain-watchdog
+  cancel-in-progress: false
 
 jobs:
   check-domains:
     runs-on: ubuntu-latest
+    timeout-minutes: 360 # Allows continuous execution up to 6 hours
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

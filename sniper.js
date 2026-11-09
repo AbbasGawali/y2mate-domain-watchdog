@@ -292,7 +292,8 @@ async function evaluateTlds(tldList, tierName) {
 async function startSniper() {
   const isCI = process.env.GITHUB_ACTIONS === 'true';
   const sessionStartTime = Date.now();
-  const MAX_SESSION_MS = isCI ? 13.5 * 60 * 1000 : Infinity;
+  // In GitHub Actions, run continuously for 5.5 hours (330 mins) per session
+  const MAX_SESSION_MS = isCI ? 330 * 60 * 1000 : Infinity;
 
   console.log(`====================================================`);
   console.log(`⚡ ULTRA HIGH-SPEED Y2MATE DOMAIN SNIPER ACTIVE`);

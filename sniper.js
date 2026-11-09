@@ -44,7 +44,7 @@ const ELITE_HOT_TLDS = [
 
 let allTlds = [];
 
-// Enforce strictly SINGLE-DOT TLDs (e.g. y2mate.shop -> allowed, y2mate.uk.com -> blocked)
+// Enforce strictly SINGLE-DOT TLDs
 function isCleanSingleDotTld(tld) {
   return tld && !tld.includes('.');
 }
@@ -108,7 +108,9 @@ async function purchaseDomain(domain, priceUsd, drScore) {
   }
 
   const startTime = Date.now();
+  const directBuyLink = `https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck=${encodeURIComponent(domain)}`;
   console.log(`\n⚡ [SUB-SECOND TRIGGER] Sniping WINNER ${domain} (DR: ${drScore}, Price: $${priceUsd.toFixed(2)} / ₹${Math.round(priceUsd * 84)})...`);
+  console.log(`🔗 1-Click Buy Link: ${directBuyLink}`);
 
   const purchaseBody = {
     domain: domain,
@@ -146,7 +148,7 @@ async function purchaseDomain(domain, priceUsd, drScore) {
     if (res.ok && (result.orderId || result.total)) {
       purchaseCount++;
       console.log(`\n🎉 [SNIPED IN ${latency}ms] Domain ${domain} REGISTERED! Order ID: ${result.orderId}`);
-      console.log(`🔒 [SAFETY GUARD] Purchases limit reached (1/1). Sniper permanently locked to protect card.`);
+      console.log(`🔒 [SAFETY GUARD] Purchases limit reached (1/1). Sniper permanently locked.`);
       
       await sendAlert({
         success: true,
@@ -154,13 +156,13 @@ async function purchaseDomain(domain, priceUsd, drScore) {
         priceUsd: priceUsd,
         drScore: drScore,
         orderId: result.orderId,
-        buyLink: `https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck=${encodeURIComponent(domain)}`,
+        buyLink: directBuyLink,
         statusMessage: `Successfully bought via GoDaddy API in ${latency}ms!`
       });
       return true;
     } else {
       console.error(`\n[X] Purchase API declined (${res.status}):`, result);
-      console.log(`📧 Dispatching urgent email alert with 1-click buy link to ${ALERT_EMAIL}...`);
+      console.log(`📧 Dispatching urgent email alert with 1-click buy link...`);
       
       await sendAlert({
         success: false,
@@ -168,8 +170,8 @@ async function purchaseDomain(domain, priceUsd, drScore) {
         priceUsd: priceUsd,
         drScore: drScore,
         error: result.message || JSON.stringify(result),
-        buyLink: `https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck=${encodeURIComponent(domain)}`,
-        statusMessage: 'Auto-buy declined (No default card / gateway rejection). Click below to buy manually immediately!'
+        buyLink: directBuyLink,
+        statusMessage: 'Auto-buy declined. Direct 1-click manual buy link attached.'
       });
       return false;
     }
@@ -181,7 +183,7 @@ async function purchaseDomain(domain, priceUsd, drScore) {
       priceUsd: priceUsd,
       drScore: drScore,
       error: err.message,
-      buyLink: `https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck=${encodeURIComponent(domain)}`,
+      buyLink: directBuyLink,
       statusMessage: 'Exception during purchase. Direct 1-click buy link attached.'
     });
     return false;
@@ -189,10 +191,10 @@ async function purchaseDomain(domain, priceUsd, drScore) {
 }
 
 async function sendAlert(data) {
-  const directLink = `https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck=${encodeURIComponent(data.domain)}`;
+  const directLink = data.buyLink || `https://www.godaddy.com/domainsearch/find?checkAvail=1&domainToCheck=${encodeURIComponent(data.domain)}`;
   const subject = data.success
     ? `🎯 [SNIPED] Successfully Bought ${data.domain} (Ahrefs DR: ${data.drScore}, ₹${Math.round(data.priceUsd * 84)})`
-    : `🚨 [DROP DETECTED] ${data.domain} is LIVE (Ahrefs DR: ${data.drScore}, ₹${Math.round(data.priceUsd * 84)}) - BUY NOW`;
+    : `🚨 [DROP DETECTED] ${data.domain} (Ahrefs DR: ${data.drScore}, ₹${Math.round(data.priceUsd * 84)}) - BUY NOW`;
 
   const payload = {
     _subject: subject,
@@ -211,12 +213,15 @@ async function sendAlert(data) {
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'Origin': 'https://y2mate.cyou',
-        'Referer': 'https://y2mate.cyou/'
+        'Origin': 'https://formsubmit.co',
+        'Referer': 'https://formsubmit.co/'
       },
       body: JSON.stringify(payload)
     });
     console.log(`[FormSubmit Email] Sent to ${ALERT_EMAIL} (Status: ${res.status})`);
+    if (res.status === 403) {
+      console.log(`ℹ️ [NOTE] FormSubmit requires a 1-time activation email click on ${ALERT_EMAIL}. Check inbox/spam!`);
+    }
   } catch (e) {
     console.error(`[FormSubmit Email Error]:`, e.message);
   }
@@ -238,7 +243,6 @@ async function evaluateTlds(tldList, tierName) {
   const startTime = Date.now();
   const availableDomains = [];
 
-  // Filter: Strictly single-dot TLDs
   const cleanList = tldList.filter(isCleanSingleDotTld);
 
   await mapConcurrent(cleanList, CONCURRENCY_LIMIT, async (tld) => {
@@ -246,7 +250,6 @@ async function evaluateTlds(tldList, tierName) {
     const domain = `y2mate.${tld}`;
     const avail = await checkAvailability(domain);
 
-    // Definite check & availability confirmation
     if (avail && avail.available && avail.definitive) {
       const priceUsd = (avail.price || 0) / 1000000;
       const priceInr = Math.round(priceUsd * 84);
@@ -260,7 +263,8 @@ async function evaluateTlds(tldList, tierName) {
   const duration = Date.now() - startTime;
 
   if (availableDomains.length > 0) {
-    console.log(`\n⚡ [${new Date().toLocaleTimeString()}] Found ${availableDomains.length} real drop(s) under ₹500 in ${duration}ms! Checking Ahrefs DR...`);
+    console.log(`\n\n================================================================================`);
+    console.log(`⚡ [${new Date().toLocaleTimeString()}] Found ${availableDomains.length} real drop(s) under ₹500 in ${duration}ms! Checking Ahrefs DR...`);
 
     const scored = await Promise.all(
       availableDomains.map(async (item) => {
@@ -269,20 +273,36 @@ async function evaluateTlds(tldList, tierName) {
       })
     );
 
+    // Sort all found domains descending by Ahrefs DR
+    scored.sort((a, b) => b.dr - a.dr);
+
+    // Print clear, readable table of ALL found domains with DR and Price
+    console.log(`\n📋 [COMPLETE DROPS TABLE - RANKED BY DOMAIN RATING]`);
+    console.log(`--------------------------------------------------------------------------------`);
+    console.log(`RANK | DOMAIN NAME          | AHREFS DR | PRICE (INR) | PRICE (USD) | STATUS`);
+    console.log(`--------------------------------------------------------------------------------`);
+    scored.forEach((item, idx) => {
+      const rank = String(idx + 1).padEnd(4, ' ');
+      const domain = item.domain.padEnd(20, ' ');
+      const dr = String(item.dr).padEnd(9, ' ');
+      const inr = `₹${item.priceInr}`.padEnd(11, ' ');
+      const usd = `$${item.priceUsd.toFixed(2)}`.padEnd(11, ' ');
+      const status = item.dr >= MIN_AHREFS_DR ? '🔥 QUALIFIED (DR >= 5)' : '⚪ Low DR (Skipped)';
+      console.log(`${rank} | ${domain} | ${dr} | ${inr} | ${usd} | ${status}`);
+    });
+    console.log(`--------------------------------------------------------------------------------\n`);
+
     const qualified = scored.filter(c => c.dr >= MIN_AHREFS_DR);
 
     if (qualified.length > 0) {
-      // Sort descending by DR to pick the absolute highest value winner
-      qualified.sort((a, b) => b.dr - a.dr);
-
-      console.log(`\n🏆 [LEADERBOARD] Qualified drops:`);
-      qualified.forEach((q, idx) => {
-        console.log(`   #${idx + 1}: ${q.domain} (DR: ${q.dr}, ₹${q.priceInr})`);
-      });
-
       const winner = qualified[0];
+      console.log(`🎯 SELECTED HIGHEST DR WINNER: ${winner.domain} (DR: ${winner.dr}, ₹${winner.priceInr})`);
+      console.log(`================================================================================\n`);
       await purchaseDomain(winner.domain, winner.priceUsd, winner.dr);
       return;
+    } else {
+      console.log(`[-] None of the ${scored.length} drops met the minimum DR ${MIN_AHREFS_DR} threshold.`);
+      console.log(`================================================================================\n`);
     }
   }
 
@@ -292,14 +312,14 @@ async function evaluateTlds(tldList, tierName) {
 async function startSniper() {
   const isCI = process.env.GITHUB_ACTIONS === 'true';
   const sessionStartTime = Date.now();
-  // In GitHub Actions, run continuously for 5.5 hours (330 mins) per session
+  // In GitHub Actions, runs continuously for 5.5 hours per session
   const MAX_SESSION_MS = isCI ? 330 * 60 * 1000 : Infinity;
 
   console.log(`====================================================`);
   console.log(`⚡ ULTRA HIGH-SPEED Y2MATE DOMAIN SNIPER ACTIVE`);
   console.log(`🚀 Architecture: 8 Parallel Async Threads`);
   console.log(`🔥 Mode: ${isCI ? 'GitHub Actions Continuous Pipeline' : 'Local 24/7 Daemon'}`);
-  console.log(`🛡️ Filter: Strictly Single-Dot TLDs Only (No .uk.com, no .uk.net)`);
+  console.log(`🛡️ Filter: Strictly Single-Dot TLDs Only`);
   console.log(`⏱️ Hot Loop: 35 Clean Tier 1 TLDs every 3s`);
   console.log(`💰 Max Price: ₹${MAX_PRICE_INR} | Min DR: ${MIN_AHREFS_DR}+`);
   console.log(`🔒 Safety: 1 Purchase Limit`);

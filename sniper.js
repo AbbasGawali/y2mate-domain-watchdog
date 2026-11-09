@@ -59,9 +59,7 @@ async function fetchAllGoDaddyTlds() {
     });
     if (res.ok) {
       const list = await res.json();
-      return list
-        .map(item => item.name.toLowerCase())
-        .filter(isCleanSingleDotTld);
+      return list.map(item => item.name.toLowerCase());
     }
   } catch (e) {}
 
@@ -248,11 +246,11 @@ async function evaluateTlds(tldList, tierName) {
   const startTime = Date.now();
   const availableDomains = [];
 
-  const cleanList = tldList.filter(isCleanSingleDotTld);
-
-  await mapConcurrent(cleanList, CONCURRENCY_LIMIT, async (tld) => {
+  // Scan all TLDs in the tier (both single-dot and multi-dot)
+  await mapConcurrent(tldList, CONCURRENCY_LIMIT, async (tld) => {
     if (purchaseCount >= MAX_PURCHASES_SESSION) return;
     const domain = `y2mate.${tld}`;
+    const isSingleDot = isCleanSingleDotTld(tld);
     const avail = await checkAvailability(domain);
 
     if (avail && avail.available && avail.definitive) {
@@ -260,7 +258,7 @@ async function evaluateTlds(tldList, tierName) {
       const priceInr = Math.round(priceUsd * 84);
 
       if (priceInr <= MAX_PRICE_INR && priceUsd <= MAX_PRICE_USD) {
-        availableDomains.push({ domain, priceUsd, priceInr });
+        availableDomains.push({ domain, tld, priceUsd, priceInr, isSingleDot });
       }
     }
   });
@@ -268,8 +266,8 @@ async function evaluateTlds(tldList, tierName) {
   const duration = Date.now() - startTime;
 
   if (availableDomains.length > 0) {
-    console.log(`\n\n================================================================================`);
-    console.log(`⚡ [${new Date().toLocaleTimeString()}] Found ${availableDomains.length} real drop(s) under ₹500 in ${duration}ms! Checking Ahrefs DR...`);
+    console.log(`\n\n====================================================================================================`);
+    console.log(`⚡ [${new Date().toLocaleTimeString()}] Discovered ${availableDomains.length} real drop(s) under ₹${MAX_PRICE_INR} in ${duration}ms! Checking Ahrefs DR...`);
 
     const scored = await Promise.all(
       availableDomains.map(async (item) => {
@@ -278,40 +276,54 @@ async function evaluateTlds(tldList, tierName) {
       })
     );
 
-    // Sort all found domains descending by Ahrefs DR
-    scored.sort((a, b) => b.dr - a.dr);
+    // Sort descending by DR, then by lowest price
+    scored.sort((a, b) => b.dr - a.dr || a.priceInr - b.priceInr);
 
-    // Print clear, readable table of ALL found domains with DR and Price
+    // Print clear, beautifully styled ASCII table of ALL found domains
     console.log(`\n📋 [COMPLETE DROPS TABLE - RANKED BY DOMAIN RATING]`);
-    console.log(`--------------------------------------------------------------------------------`);
-    console.log(`RANK | DOMAIN NAME          | AHREFS DR | PRICE (INR) | PRICE (USD) | STATUS`);
-    console.log(`--------------------------------------------------------------------------------`);
+    console.log(`┌──────┬──────────────────────┬────────────┬───────────┬─────────────┬─────────────┬────────────────────────────────────┐`);
+    console.log(`│ RANK │ DOMAIN NAME          │ TLD TYPE   │ AHREFS DR │ PRICE (INR) │ PRICE (USD) │ STATUS                             │`);
+    console.log(`├──────┼──────────────────────┼────────────┼───────────┼─────────────┼─────────────┼────────────────────────────────────┤`);
     scored.forEach((item, idx) => {
       const rank = String(idx + 1).padEnd(4, ' ');
       const domain = item.domain.padEnd(20, ' ');
+      const type = item.isSingleDot ? 'Single-Dot'.padEnd(10, ' ') : 'Multi-Dot '.padEnd(10, ' ');
       const dr = String(item.dr).padEnd(9, ' ');
       const inr = `₹${item.priceInr}`.padEnd(11, ' ');
-      const usd = `$${item.priceUsd.toFixed(2)}`.padEnd(11, ' ');
-      const status = item.dr >= MIN_AHREFS_DR ? '🔥 QUALIFIED (DR >= 5)' : '⚪ Low DR (Skipped)';
-      console.log(`${rank} | ${domain} | ${dr} | ${inr} | ${usd} | ${status}`);
-    });
-    console.log(`--------------------------------------------------------------------------------\n`);
+      const usd = `${item.priceUsd.toFixed(2)}`.padEnd(11, ' ');
 
-    const qualified = scored.filter(c => c.dr >= MIN_AHREFS_DR);
+      let status = '';
+      if (item.isSingleDot) {
+        if (item.dr >= MIN_AHREFS_DR) {
+          status = '🔥 QUALIFIED (Auto-Buy & Alert)';
+        } else {
+          status = `⚪ Low DR (< ${MIN_AHREFS_DR})`;
+        }
+      } else {
+        status = 'ℹ️ Multi-Dot (Logged Only - No Alert)';
+      }
+      status = status.padEnd(34, ' ');
+
+      console.log(`│ ${rank} │ ${domain} │ ${type} │ ${dr} │ ${inr} │ ${usd} │ ${status} │`);
+    });
+    console.log(`└──────┴──────────────────────┴────────────┴───────────┴─────────────┴─────────────┴────────────────────────────────────┘\n`);
+
+    // Strictly qualify ONLY single-dot domains meeting DR >= MIN_AHREFS_DR and price <= MAX_PRICE_INR
+    const qualified = scored.filter(c => c.isSingleDot && c.dr >= MIN_AHREFS_DR);
 
     if (qualified.length > 0) {
       const winner = qualified[0];
       console.log(`🎯 SELECTED HIGHEST DR WINNER: ${winner.domain} (DR: ${winner.dr}, ₹${winner.priceInr})`);
-      console.log(`================================================================================\n`);
+      console.log(`====================================================================================================\n`);
       await purchaseDomain(winner.domain, winner.priceUsd, winner.dr);
       return;
     } else {
-      console.log(`[-] None of the ${scored.length} drops met the minimum DR ${MIN_AHREFS_DR} threshold.`);
-      console.log(`================================================================================\n`);
+      console.log(`[-] None of the ${scored.length} drop(s) met the qualification criteria (Single-Dot + DR >= ${MIN_AHREFS_DR} + <= ₹${MAX_PRICE_INR}).`);
+      console.log(`====================================================================================================\n`);
     }
   }
 
-  process.stdout.write(`\r[${new Date().toLocaleTimeString()}] ⚡ ${tierName}: ${cleanList.length} clean single-dot TLDs checked in ${duration}ms - Clean.`);
+  process.stdout.write(`\r[${new Date().toLocaleTimeString()}] ⚡ ${tierName}: ${tldList.length} TLDs checked in ${duration}ms - Clean.`);
 }
 
 async function startSniper() {

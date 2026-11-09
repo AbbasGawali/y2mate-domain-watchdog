@@ -266,9 +266,6 @@ async function evaluateTlds(tldList, tierName) {
   const duration = Date.now() - startTime;
 
   if (availableDomains.length > 0) {
-    console.log(`\n\n====================================================================================================`);
-    console.log(`⚡ [${new Date().toLocaleTimeString()}] Discovered ${availableDomains.length} real drop(s) under ₹${MAX_PRICE_INR} in ${duration}ms! Checking Ahrefs DR...`);
-
     const scored = await Promise.all(
       availableDomains.map(async (item) => {
         const dr = await getAhrefsDR(item.domain);
@@ -276,50 +273,55 @@ async function evaluateTlds(tldList, tierName) {
       })
     );
 
+    // Filter out low DR domains (< 5) so the table stays clean and high-value
+    const highDrDrops = scored.filter(item => item.dr >= MIN_AHREFS_DR);
+
     // Sort descending by DR, then by lowest price
-    scored.sort((a, b) => b.dr - a.dr || a.priceInr - b.priceInr);
+    highDrDrops.sort((a, b) => b.dr - a.dr || a.priceInr - b.priceInr);
 
-    // Print clear, beautifully styled ASCII table of ALL found domains
-    console.log(`\n📋 [COMPLETE DROPS TABLE - RANKED BY DOMAIN RATING]`);
-    console.log(`┌──────┬──────────────────────┬────────────┬───────────┬─────────────┬─────────────┬────────────────────────────────────┐`);
-    console.log(`│ RANK │ DOMAIN NAME          │ TLD TYPE   │ AHREFS DR │ PRICE (INR) │ PRICE (USD) │ STATUS                             │`);
-    console.log(`├──────┼──────────────────────┼────────────┼───────────┼─────────────┼─────────────┼────────────────────────────────────┤`);
-    scored.forEach((item, idx) => {
-      const rank = String(idx + 1).padEnd(4, ' ');
-      const domain = item.domain.padEnd(20, ' ');
-      const type = item.isSingleDot ? 'Single-Dot'.padEnd(10, ' ') : 'Multi-Dot '.padEnd(10, ' ');
-      const dr = String(item.dr).padEnd(9, ' ');
-      const inr = `₹${item.priceInr}`.padEnd(11, ' ');
-      const usd = `${item.priceUsd.toFixed(2)}`.padEnd(11, ' ');
+    if (highDrDrops.length > 0) {
+      console.log(`\n\n====================================================================================================`);
+      console.log(`⚡ [${new Date().toLocaleTimeString()}] Found ${highDrDrops.length} high-authority drop(s) (DR >= ${MIN_AHREFS_DR}) under ₹${MAX_PRICE_INR} in ${duration}ms!`);
+      console.log(`\n📋 [QUALIFIED DROPS TABLE - Ahrefs DR >= ${MIN_AHREFS_DR}]`);
+      console.log(`┌──────┬──────────────────────┬────────────┬───────────┬─────────────┬─────────────┬────────────────────────────────────┐`);
+      console.log(`│ RANK │ DOMAIN NAME          │ TLD TYPE   │ AHREFS DR │ PRICE (INR) │ PRICE (USD) │ STATUS                             │`);
+      console.log(`├──────┼──────────────────────┼────────────┼───────────┼─────────────┼─────────────┼────────────────────────────────────┤`);
+      highDrDrops.forEach((item, idx) => {
+        const rank = String(idx + 1).padEnd(4, ' ');
+        const domain = item.domain.padEnd(20, ' ');
+        const type = item.isSingleDot ? 'Single-Dot'.padEnd(10, ' ') : 'Multi-Dot '.padEnd(10, ' ');
+        const dr = String(item.dr).padEnd(9, ' ');
+        const inr = `₹${item.priceInr}`.padEnd(11, ' ');
+        const usd = `${item.priceUsd.toFixed(2)}`.padEnd(11, ' ');
 
-      let status = '';
-      if (item.isSingleDot) {
-        if (item.dr >= MIN_AHREFS_DR) {
+        let status = '';
+        if (item.isSingleDot) {
           status = '🔥 QUALIFIED (Auto-Buy & Alert)';
         } else {
-          status = `⚪ Low DR (< ${MIN_AHREFS_DR})`;
+          status = 'ℹ️ Multi-Dot (Logged Only - No Alert)';
         }
+        status = status.padEnd(34, ' ');
+
+        console.log(`│ ${rank} │ ${domain} │ ${type} │ ${dr} │ ${inr} │ ${usd} │ ${status} │`);
+      });
+      console.log(`└──────┴──────────────────────┴────────────┴───────────┴─────────────┴─────────────┴────────────────────────────────────┘\n`);
+
+      // Strictly qualify ONLY single-dot domains meeting DR >= MIN_AHREFS_DR and price <= MAX_PRICE_INR
+      const qualified = highDrDrops.filter(c => c.isSingleDot);
+
+      if (qualified.length > 0) {
+        const winner = qualified[0];
+        console.log(`🎯 SELECTED HIGHEST DR WINNER: ${winner.domain} (DR: ${winner.dr}, ₹${winner.priceInr})`);
+        console.log(`====================================================================================================\n`);
+        await purchaseDomain(winner.domain, winner.priceUsd, winner.dr);
+        return;
       } else {
-        status = 'ℹ️ Multi-Dot (Logged Only - No Alert)';
+        console.log(`[-] High DR domains were found, but all were Multi-Dot. No single-dot domain met qualification.`);
+        console.log(`====================================================================================================\n`);
       }
-      status = status.padEnd(34, ' ');
-
-      console.log(`│ ${rank} │ ${domain} │ ${type} │ ${dr} │ ${inr} │ ${usd} │ ${status} │`);
-    });
-    console.log(`└──────┴──────────────────────┴────────────┴───────────┴─────────────┴─────────────┴────────────────────────────────────┘\n`);
-
-    // Strictly qualify ONLY single-dot domains meeting DR >= MIN_AHREFS_DR and price <= MAX_PRICE_INR
-    const qualified = scored.filter(c => c.isSingleDot && c.dr >= MIN_AHREFS_DR);
-
-    if (qualified.length > 0) {
-      const winner = qualified[0];
-      console.log(`🎯 SELECTED HIGHEST DR WINNER: ${winner.domain} (DR: ${winner.dr}, ₹${winner.priceInr})`);
-      console.log(`====================================================================================================\n`);
-      await purchaseDomain(winner.domain, winner.priceUsd, winner.dr);
-      return;
     } else {
-      console.log(`[-] None of the ${scored.length} drop(s) met the qualification criteria (Single-Dot + DR >= ${MIN_AHREFS_DR} + <= ₹${MAX_PRICE_INR}).`);
-      console.log(`====================================================================================================\n`);
+      // Discarded silent log for low DR drops
+      // Kept clean so terminal is not flooded with DR 0 junk
     }
   }
 

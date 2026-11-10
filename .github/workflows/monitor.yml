@@ -4,8 +4,9 @@ on:
   push:
     branches: [ main ]
   schedule:
-    # Triggers regularly 24/7
-    - cron: '*/30 * * * *'
+    # High-density staggered triggers to guarantee instant takeover with zero runner gaps
+    - cron: '*/10 * * * *'
+    - cron: '5,15,25,35,45,55 * * * *'
   workflow_dispatch: # Allows manual trigger anytime
 
 concurrency:

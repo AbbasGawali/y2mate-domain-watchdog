@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Y2Mate Domain Watchdog - Live Dispatcher</title>
+  <meta name="robots" content="noindex, nofollow">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #090d16;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .card {
+      background: #111827;
+      border: 1px solid #1f2937;
+      border-radius: 16px;
+      max-width: 520px;
+      width: 100%;
+      padding: 32px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+      text-align: center;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 20px;
+    }
+    .badge-live {
+      background: rgba(16, 185, 129, 0.15);
+      color: #10b981;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .pulse {
+      width: 8px;
+      height: 8px;
+      background: #10b981;
+      border-radius: 50%;
+      box-shadow: 0 0 10px #10b981;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(1.3); }
+    }
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: #f8fafc;
+      margin-bottom: 8px;
+    }
+    p.sub {
+      color: #94a3b8;
+      font-size: 14px;
+      margin-bottom: 24px;
+    }
+    .stats-box {
+      background: #0b1120;
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 24px;
+      text-align: left;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+      color: #cbd5e1;
+      line-height: 1.8;
+    }
+    .btn {
+      display: block;
+      width: 100%;
+      background: #2563eb;
+      color: #ffffff;
+      padding: 14px;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.2s;
+      border: none;
+      cursor: pointer;
+    }
+    .btn:hover {
+      background: #1d4ed8;
+      box-shadow: 0 0 20px rgba(37, 99, 235, 0.4);
+    }
+    .direct-link {
+      margin-top: 16px;
+      display: block;
+      color: #64748b;
+      font-size: 12px;
+      text-decoration: none;
+    }
+    .direct-link:hover { color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge badge-live">
+      <span class="pulse"></span>
+      <span id="badge-text">Locating Active Watchdog Job...</span>
+    </div>
+    <h1>Y2Mate Domain Watchdog</h1>
+    <p class="sub">Direct real-time terminal log dispatcher</p>
+
+    <div class="stats-box" id="stats">
+      Fetching latest GitHub runner telemetry...
+    </div>
+
+    <a href="#" id="open-btn" class="btn" target="_blank">Open Live Terminal Logs</a>
+    <a href="https://github.com/AbbasGawali/y2mate-domain-watchdog/actions" class="direct-link" target="_blank">All Workflow Runs &rarr;</a>
+  </div>
+
+  <script>
+    (async function() {
+      const REPO = 'AbbasGawali/y2mate-domain-watchdog';
+      const stats = document.getElementById('stats');
+      const badge = document.getElementById('badge-text');
+      const btn = document.getElementById('open-btn');
+      const isAuto = new URLSearchParams(window.location.search).get('direct') === '1';
+
+      try {
+        let res = await fetch(`https://api.github.com/repos/${REPO}/actions/runs?status=in_progress&per_page=1`);
+        let data = await res.json();
+        let run = (data.workflow_runs && data.workflow_runs[0]);
+
+        if (!run) {
+          res = await fetch(`https://api.github.com/repos/${REPO}/actions/runs?per_page=1`);
+          data = await res.json();
+          run = (data.workflow_runs && data.workflow_runs[0]);
+        }
+
+        if (!run) {
+          stats.innerHTML = 'No workflow runs found.';
+          return;
+        }
+
+        let targetUrl = run.html_url;
+        try {
+          const jobsRes = await fetch(run.jobs_url);
+          const jobsData = await jobsRes.json();
+          if (jobsData.jobs && jobsData.jobs.length > 0) {
+            targetUrl = jobsData.jobs[0].html_url;
+          }
+        } catch (e) {}
+
+        const isRunning = run.status === 'in_progress';
+        badge.textContent = isRunning ? `Run #${run.run_number} LIVE IN PROGRESS` : `Run #${run.run_number} (${run.status})`;
+        
+        const runAgeMin = Math.round((Date.now() - new Date(run.created_at).getTime()) / 60000);
+
+        stats.innerHTML = [
+          `<b>RUN ID:</b>      #${run.run_number} (${run.name})`,
+          `<b>STATUS:</b>      <span style="color:${isRunning ? '#10b981' : '#f59e0b'}">${run.status.toUpperCase()}</span>`,
+          `<b>STARTED:</b>     ${new Date(run.created_at).toLocaleTimeString()}`,
+          `<b>UPTIME:</b>      ${runAgeMin} minute(s)`,
+          `<b>BRANCH:</b>      ${run.head_branch}`
+        ].join('<br>');
+
+        btn.href = targetUrl;
+        btn.textContent = isRunning ? `🚀 Open Live Run #${run.run_number} Terminal` : `View Run #${run.run_number} Details`;
+
+        if (isAuto && targetUrl) {
+          window.location.replace(targetUrl);
+        }
+      } catch (err) {
+        stats.textContent = 'Failed to connect to GitHub API: ' + err.message;
+        btn.href = `https://github.com/${REPO}/actions`;
+      }
+    })();
+  </script>
+</body>
+</html>

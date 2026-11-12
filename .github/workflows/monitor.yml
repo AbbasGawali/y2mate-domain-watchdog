@@ -4,9 +4,8 @@ on:
   push:
     branches: [ main ]
   schedule:
-    # High-density staggered triggers to guarantee instant takeover with zero runner gaps
-    - cron: '*/10 * * * *'
-    - cron: '5,15,25,35,45,55 * * * *'
+    # 4 clean continuous handover sessions daily (00:00, 06:00, 12:00, 18:00 UTC) with zero queue overflow
+    - cron: '0 0,6,12,18 * * *'
   workflow_dispatch: # Allows manual trigger anytime
 
 concurrency:

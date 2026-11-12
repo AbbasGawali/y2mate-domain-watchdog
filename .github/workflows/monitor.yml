@@ -4,28 +4,46 @@ on:
   push:
     branches: [ main ]
   schedule:
-    # 4 clean continuous handover sessions daily (00:00, 06:00, 12:00, 18:00 UTC) with zero queue overflow
-    - cron: '0 0,6,12,18 * * *'
+    # Runs every 25 minutes on off-peak minutes to guarantee instant gapless handover
+    - cron: '12,37 * * * *'
   workflow_dispatch: # Allows manual trigger anytime
 
-concurrency:
-  group: domain-watchdog
-  cancel-in-progress: false
+permissions:
+  actions: read
+  contents: read
 
 jobs:
   check-domains:
     runs-on: ubuntu-latest
     timeout-minutes: 360 # Allows continuous execution up to 6 hours
     steps:
+      - name: Check for active watchdog runner
+        id: check_lock
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ACTIVE_RUNS=$(gh run list --workflow="monitor.yml" --status=in_progress --json databaseId --jq '.[].databaseId' | grep -v "${{ github.run_id }}" || true)
+          if [ -n "$ACTIVE_RUNS" ]; then
+            echo "⚡ Another watchdog runner is already actively scanning domains (Run ID: $ACTIVE_RUNS)."
+            echo "Exiting this check cleanly with zero errors."
+            echo "should_run=false" >> $GITHUB_OUTPUT
+          else
+            echo "🚀 No active runner detected. Starting fresh 6-hour continuous sniper session."
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: Checkout code
+        if: steps.check_lock.outputs.should_run == 'true'
         uses: actions/checkout@v4
 
       - name: Setup Node.js
+        if: steps.check_lock.outputs.should_run == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
       - name: Run Domain Availability Sniper
+        if: steps.check_lock.outputs.should_run == 'true'
         env:
           GODADDY_TOKEN: ${{ secrets.GODADDY_TOKEN || 'gd_pat_mkTG9UGo5YyNUITj2bCJLPsswGYYYnzGdfDGBYyPGyb_08c1b0ac' }}
           AHREFS_KEY: ${{ secrets.AHREFS_KEY || 'yAlv3OBM7h_8pwthcGYdFYbUIQ-TBoQndItVZLo7' }}
